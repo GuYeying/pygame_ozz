@@ -112,6 +112,20 @@ impl Player {
     pub fn duration(&self) -> f32 {
         self.animation.duration()
     }
+
+    /// 关节世界位置（xy 平面——上一次 sample 的缓存；骨骼可视化 /
+    /// 平面投影 demo 的消费形态）。
+    pub fn joint_positions_xy(&self) -> Vec<(f32, f32)> {
+        self.models
+            .read()
+            .map(|m| m.iter().map(|t| (t.w_axis.x, t.w_axis.y)).collect())
+            .unwrap_or_default()
+    }
+
+    /// 父关节索引表（骨序；根 = -1）——骨骼连线段的拓扑。
+    pub fn joint_parents(&self) -> Vec<i16> {
+        self.skeleton.joint_parents().to_vec()
+    }
 }
 
 #[cfg(test)]
