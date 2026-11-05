@@ -3,15 +3,20 @@
 //!
 //! 上游 = [ozz-animation-rs](https://github.com/SlimeYummy/ozz-animation-rs)
 //! （MPL-2.0，ozz-animation 的 Rust 移植——确定性采样 / 混合 / IK /
-//! 蒙皮 job 管线）。本 crate 封装一个 [`Player`]（采样→局部→模型矩阵
-//! 三段 job 的薄会话），并把 playback 测试资产内嵌为 demo 字节（零资产
-//! 测试链；资产 MPL-2.0 归属上游仓库）。
+//! 蒙皮 job 管线）。**工具链前置：上游使用 std::simd——需 nightly rustc
+//! 构建**（生态默认 stable；本 crate 经 pygamest feature `ozz` 门控，
+//! nightly 宿主构建激活，stable 默认构建不受影响）。
+//!
+//! 本 crate 封装一个 [`Player`]（采样→局部→模型矩阵三段 job 的薄会话），
+//! 并把 playback 测试资产内嵌为 demo 字节（零资产测试链；资产 MPL-2.0
+//! 归属上游仓库）。
 //!
 //! 渲染接入路径（v1 数据面）：`model_matrices()` = 每关节 16 f32 列主
 //! 矩阵流——引擎蒙皮 mesh draw 面落地后接 GPU；v1 为数据出口。
 
+use glam::Mat4;
 use ozz_animation_rs::{
-    Animation, LocalToModelJob, SamplingContext, SamplingJob, Skeleton,
+    Animation, LocalToModelJob, SamplingContext, SamplingJob, Skeleton, SoaTransform,
 };
 use std::io::Cursor;
 use std::sync::{Arc, RwLock};
@@ -31,8 +36,8 @@ pub struct Player {
     skeleton: Arc<Skeleton>,
     animation: Arc<Animation>,
     context: SamplingContext,
-    locals: Arc<RwLock<Vec<ozz_animation_rs::SoaTransform>>>,
-    models: Arc<RwLock<Vec<glam::Mat4>>>,
+    locals: Arc<RwLock<Vec<SoaTransform>>>,
+    models: Arc<RwLock<Vec<Mat4>>>,
 }
 
 impl Player {
@@ -49,15 +54,16 @@ impl Player {
             let mut ar = ozz_animation_rs::Archive::new(Cursor::new(animation_bytes))?;
             Animation::from_archive(&mut ar)?
         };
-        let num = skeleton.num_joints();
+        let num_tracks = animation.num_tracks();
         Ok(Self {
-            locals: Arc::new(RwLock::new(
-                vec![ozz_animation_rs::SoaTransform::default(); (num + 3) / 4],
-            )),
-            models: Arc::new(RwLock::new(vec![glam::Mat4::IDENTITY; num])),
+            locals: Arc::new(RwLock::new(vec![
+                SoaTransform::default();
+                skeleton.num_soa_joints()
+            ])),
+            models: Arc::new(RwLock::new(vec![Mat4::IDENTITY; skeleton.num_joints()])),
             skeleton: Arc::new(skeleton),
             animation: Arc::new(animation),
-            context: SamplingContext::new(num),
+            context: SamplingContext::new(num_tracks),
         })
     }
 
@@ -66,28 +72,31 @@ impl Player {
         self.skeleton.num_joints()
     }
 
-    /// 关节名表（骨序）。
+    /// 关节名表（骨序——bimap 反查排序）。
     pub fn joint_names(&self) -> Vec<String> {
-        let map = self.skeleton.joint_names();
-        (0..self.skeleton.num_joints())
-            .filter_map(|i| {
-                map.get_by_joint(i as i16).map(|(s, _)| s.to_owned())
-            })
-            .collect()
+        let mut pairs: Vec<(i16, String)> = self
+            .skeleton
+            .joint_names()
+            .iter()
+            .map(|(name, idx)| (*idx, name.clone()))
+            .collect();
+        pairs.sort_by_key(|(idx, _)| *idx);
+        pairs.into_iter().map(|(_, name)| name).collect()
     }
 
     /// 采样（ratio 0..1 归一动画时间）→ 模型矩阵（就地缓存）。
     pub fn sample(&mut self, ratio: f32) -> Result<(), ozz_animation_rs::OzzError> {
         let mut sampling = SamplingJob::default();
-        sampling.animation = Some(self.animation.clone());
-        sampling.context = Some(self.context.clone());
-        sampling.ratio = ratio.clamp(0.0, 1.0);
-        sampling.output = Some(self.locals.clone());
+        sampling.set_animation(self.animation.clone());
+        sampling.set_context(self.context.clone());
+        sampling.set_ratio(ratio.clamp(0.0, 1.0));
+        sampling.set_output(self.locals.clone());
         sampling.run()?;
+
         let mut l2m = LocalToModelJob::default();
-        l2m.skeleton = Some(self.skeleton.clone());
-        l2m.input = Some(self.locals.clone());
-        l2m.output = Some(self.models.clone());
+        l2m.set_skeleton(self.skeleton.clone());
+        l2m.set_input(self.locals.clone());
+        l2m.set_output(self.models.clone());
         l2m.run()
     }
 

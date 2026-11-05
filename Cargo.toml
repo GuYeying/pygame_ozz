@@ -6,4 +6,5 @@ description = "pygamest 生态 3D 骨骼动画适配层——ozz-animation-rs �
 license = "MPL-2.0"
 
 [dependencies]
+glam = "0.33"
 ozz-animation-rs = { git = "https://github.com/SlimeYummy/ozz-animation-rs" }
