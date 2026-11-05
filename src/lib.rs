@@ -126,6 +126,26 @@ impl Player {
     pub fn joint_parents(&self) -> Vec<i16> {
         self.skeleton.joint_parents().to_vec()
     }
+
+    /// 关节世界基向量（xy 平面——上一次 sample 的缓存）：每骨
+    /// (px, py, rx, ry, ux, uy) = 世界位 + x/y 基方向（含骨变换旋转；
+    /// 关节盒体等程序化蒙皮 demo 的消费形态）。
+    pub fn joint_basis_2d(&self) -> Vec<(f32, f32, f32, f32, f32, f32)> {
+        self.models
+            .read()
+            .map(|m| {
+                m.iter()
+                    .map(|t| {
+                        (
+                            t.w_axis.x, t.w_axis.y,
+                            t.x_axis.x, t.x_axis.y,
+                            t.y_axis.x, t.y_axis.y,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 #[cfg(test)]
